@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(node --test tests/state.test.js)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(node --test tests/scoring.test.js)",
+      "Bash(node --test tests/briefing.test.js)",
+      "Bash(node --test tests/track-access.test.js)",
+      "Bash(node --test tests/flush-scores.test.js)"
+    ]
+  }
+}

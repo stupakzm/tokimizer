@@ -16,6 +16,7 @@ Tokimizer is active. It has pre-loaded a ranked list of high-value files for thi
 | `/tokimizer:reindex` | Scan full project, set token budget (run once on first use) |
 | `/tokimizer:analyze` | Show token usage report and file scores |
 | `/tokimizer:optimize` | Review and apply .claudeignore suggestions |
+| `/tokimizer:status` | Quick status: plugin state, last flush, budget, buffer, pending ignores |
 
 ## What Tokimizer does automatically
 

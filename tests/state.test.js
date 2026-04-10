@@ -95,3 +95,26 @@ test('clearSuggestions removes file', () => {
   assert.deepStrictEqual(readSuggestions(tmpDir), []);
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detectStateDir falls back to global path when settings.json is malformed JSON', () => {
+  const tmpCwd = mkTmp();
+  const claudeDir = path.join(tmpCwd, '.claude');
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{ "enabledPlugins": { INVALID JSON }');
+
+  const stateDir = detectStateDir(tmpCwd);
+
+  // Must NOT be under tmpCwd (i.e. must not be the local path)
+  assert.ok(
+    !stateDir.startsWith(tmpCwd),
+    `expected global fallback path, got local path ${stateDir}`
+  );
+  // Must be under the global tokimizer base
+  assert.ok(
+    stateDir.includes(path.join('.claude', 'tokimizer')),
+    `expected global tokimizer path, got ${stateDir}`
+  );
+
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});

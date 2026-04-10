@@ -20,7 +20,9 @@ function detectStateDir(cwd) {
         fs.mkdirSync(localDir, { recursive: true });
         return localDir;
       }
-    } catch (_) {}
+    } catch (e) {
+      process.stderr.write(`[tokimizer] Warning: could not parse ${localSettings}: ${e.message}\n`);
+    }
   }
   const globalDir = path.join(GLOBAL_BASE, projectHash(cwd));
   fs.mkdirSync(globalDir, { recursive: true });

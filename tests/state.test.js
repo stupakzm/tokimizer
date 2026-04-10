@@ -79,12 +79,13 @@ test('clearSessionBuffer removes file', () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('appendSuggestions deduplicates entries', () => {
+test('appendSuggestions deduplicates entries by path', () => {
   const tmpDir = mkTmp();
   appendSuggestions(tmpDir, ['dist/', 'node_modules/']);
   appendSuggestions(tmpDir, ['dist/', '.next/']);
   const result = readSuggestions(tmpDir);
-  assert.deepStrictEqual(result, ['dist/', 'node_modules/', '.next/']);
+  assert.strictEqual(result.length, 3);
+  assert.deepStrictEqual(result.map(r => r.path), ['dist/', 'node_modules/', '.next/']);
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -93,6 +94,72 @@ test('clearSuggestions removes file', () => {
   appendSuggestions(tmpDir, ['dist/']);
   clearSuggestions(tmpDir);
   assert.deepStrictEqual(readSuggestions(tmpDir), []);
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('readSuggestions returns objects with path and addedAt fields', () => {
+  const tmpDir = mkTmp();
+  const before = new Date().toISOString();
+  appendSuggestions(tmpDir, ['dist/bundle.js', 'node_modules/.cache/file.js']);
+  const after = new Date().toISOString();
+  const result = readSuggestions(tmpDir);
+
+  assert.strictEqual(result.length, 2);
+
+  for (const entry of result) {
+    assert.ok(typeof entry === 'object' && entry !== null, 'entry must be an object');
+    assert.ok(typeof entry.path === 'string', 'entry.path must be a string');
+    assert.ok(typeof entry.addedAt === 'string', 'entry.addedAt must be a string');
+    const ts = new Date(entry.addedAt).getTime();
+    assert.ok(!Number.isNaN(ts), `entry.addedAt must be a valid date, got ${entry.addedAt}`);
+    assert.ok(entry.addedAt >= before, `addedAt ${entry.addedAt} should be >= ${before}`);
+    assert.ok(entry.addedAt <= after, `addedAt ${entry.addedAt} should be <= ${after}`);
+  }
+
+  assert.strictEqual(result[0].path, 'dist/bundle.js');
+  assert.strictEqual(result[1].path, 'node_modules/.cache/file.js');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('readSuggestions handles old-format lines (no pipe) as addedAt: null', () => {
+  const tmpDir = mkTmp();
+  fs.writeFileSync(
+    path.join(tmpDir, 'suggestions.txt'),
+    'dist/bundle.js\nnode_modules/.cache/file.js\n'
+  );
+  const result = readSuggestions(tmpDir);
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].path, 'dist/bundle.js');
+  assert.strictEqual(result[0].addedAt, null);
+  assert.strictEqual(result[1].path, 'node_modules/.cache/file.js');
+  assert.strictEqual(result[1].addedAt, null);
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('readSuggestions handles mixed old- and new-format lines', () => {
+  const tmpDir = mkTmp();
+  fs.writeFileSync(
+    path.join(tmpDir, 'suggestions.txt'),
+    'dist/bundle.js\nnode_modules/.cache/file.js|2026-03-28T14:00:00Z\n'
+  );
+  const result = readSuggestions(tmpDir);
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].path, 'dist/bundle.js');
+  assert.strictEqual(result[0].addedAt, null);
+  assert.strictEqual(result[1].path, 'node_modules/.cache/file.js');
+  assert.strictEqual(result[1].addedAt, '2026-03-28T14:00:00Z');
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('appendSuggestions deduplicates by path even when existing entry has a timestamp', () => {
+  const tmpDir = mkTmp();
+  appendSuggestions(tmpDir, ['dist/bundle.js']);
+  appendSuggestions(tmpDir, ['dist/bundle.js', '.next/static/chunks/app.js']);
+  const result = readSuggestions(tmpDir);
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].path, 'dist/bundle.js');
+  assert.strictEqual(result[1].path, '.next/static/chunks/app.js');
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 

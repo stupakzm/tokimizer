@@ -64,14 +64,20 @@ function clearSessionBuffer(stateDir) {
 function readSuggestions(stateDir) {
   const p = path.join(stateDir, 'suggestions.txt');
   if (!fs.existsSync(p)) return [];
-  return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean);
+  return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(line => {
+    const pipeIdx = line.indexOf('|');
+    if (pipeIdx === -1) return { path: line, addedAt: null };
+    return { path: line.slice(0, pipeIdx), addedAt: line.slice(pipeIdx + 1) };
+  });
 }
 
 function appendSuggestions(stateDir, candidates) {
-  const existing = new Set(readSuggestions(stateDir));
+  const existing = new Set(readSuggestions(stateDir).map(e => e.path));
   const newOnes = candidates.filter(c => !existing.has(c));
   if (newOnes.length === 0) return;
-  fs.appendFileSync(path.join(stateDir, 'suggestions.txt'), newOnes.join('\n') + '\n');
+  const now = new Date().toISOString();
+  const lines = newOnes.map(c => `${c}|${now}`).join('\n') + '\n';
+  fs.appendFileSync(path.join(stateDir, 'suggestions.txt'), lines);
 }
 
 function clearSuggestions(stateDir) {

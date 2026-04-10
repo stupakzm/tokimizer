@@ -95,7 +95,10 @@ test('flush adds ignore candidate for large stale file', () => {
   flush(tmpCwd, 'sess1');
 
   const suggestions = readSuggestions(stateDir);
-  assert.ok(suggestions.includes('dist/bundle.js'), `expected dist/bundle.js in ${JSON.stringify(suggestions)}`);
+  assert.ok(
+    suggestions.some(s => s.path === 'dist/bundle.js'),
+    `expected dist/bundle.js in ${JSON.stringify(suggestions)}`
+  );
 
   fs.rmSync(tmpCwd, { recursive: true, force: true });
 });

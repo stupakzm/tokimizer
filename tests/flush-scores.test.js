@@ -122,3 +122,69 @@ test('flush updates co_access for files accessed together', () => {
 
   fs.rmSync(tmpCwd, { recursive: true, force: true });
 });
+
+test('flush with null buffer does not create file-map.json', () => {
+  const { tmpCwd, stateDir } = mkLocalProject();
+  // No buffer written — file-map.json must not be created
+  const fileMapPath = path.join(stateDir, 'file-map.json');
+
+  flush(tmpCwd, 'sess1');
+
+  assert.strictEqual(
+    fs.existsSync(fileMapPath),
+    false,
+    'file-map.json should not be created when buffer is null'
+  );
+
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('flush with empty accesses does not modify existing file-map.json', () => {
+  const { tmpCwd, stateDir } = mkLocalProject();
+  const fileMapPath = path.join(stateDir, 'file-map.json');
+
+  // Write a known file-map before flushing
+  const originalMap = {
+    version: 1,
+    config: {},
+    last_updated: '2026-01-01T00:00:00.000Z',
+    files: {
+      'src/existing.ts': {
+        score: 0.8, access_count: 3, edit_count: 1,
+        last_accessed: '2026-01-01T00:00:00.000Z',
+        size_bytes: 512, sessions_unseen: 0, co_access: []
+      }
+    }
+  };
+  writeFileMap(stateDir, originalMap);
+
+  // Capture mtime before flush
+  const mtimeBefore = fs.statSync(fileMapPath).mtimeMs;
+
+  // Write a buffer with empty accesses
+  writeSessionBuffer(stateDir, { session_id: 'sess1', accesses: [] });
+  flush(tmpCwd, 'sess1');
+
+  // file-map.json must still exist and be byte-for-byte identical
+  const mtimeAfter = fs.statSync(fileMapPath).mtimeMs;
+  assert.strictEqual(
+    mtimeAfter,
+    mtimeBefore,
+    'file-map.json mtime should not change when accesses is empty'
+  );
+
+  // Content must be unchanged
+  const mapAfter = readFileMap(stateDir);
+  assert.strictEqual(
+    mapAfter.last_updated,
+    originalMap.last_updated,
+    'last_updated must not be mutated'
+  );
+  assert.strictEqual(
+    mapAfter.files['src/existing.ts'].access_count,
+    3,
+    'access_count must not be incremented'
+  );
+
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});

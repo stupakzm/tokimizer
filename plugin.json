@@ -1,0 +1,8 @@
+{
+  "name": "tokimizer",
+  "version": "1.0.0",
+  "description": "Self-learning Claude Code context optimizer. Tracks file usage, scores by token efficiency, injects smart briefings at session start.",
+  "hooks": "hooks/hooks.json",
+  "commands": "commands/",
+  "skills": "skills/"
+}

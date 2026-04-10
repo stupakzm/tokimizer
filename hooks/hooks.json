@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node \"C:/Users/TopAide/projects/tokinizer/hooks/session-start.js\"",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Glob|Grep|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/TopAide/projects/tokinizer/hooks/track-access.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node \"C:/Users/TopAide/projects/tokinizer/hooks/flush-scores.js\"",
+        "timeout": 15
+      }
+    ],
+    "PostCompact": [
+      {
+        "type": "command",
+        "command": "node \"C:/Users/TopAide/projects/tokinizer/hooks/post-compact.js\"",
+        "timeout": 10
+      }
+    ],
+    "SessionEnd": [
+      {
+        "type": "command",
+        "command": "node \"C:/Users/TopAide/projects/tokinizer/hooks/session-end.js\"",
+        "timeout": 15
+      }
+    ]
+  }
+}

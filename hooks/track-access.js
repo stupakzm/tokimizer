@@ -17,6 +17,15 @@ function extractPath(toolName, toolInput) {
   return null;
 }
 
+function normalizePath(rawPath, cwd) {
+  const rel = path.isAbsolute(rawPath)
+    ? path.relative(cwd, rawPath)
+    : rawPath;
+  const normalized = rel.replace(/\\/g, '/');
+  if (normalized.startsWith('.claude/tokimizer')) return null;
+  return normalized;
+}
+
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 10000);
 process.stdin.setEncoding('utf8');
@@ -32,14 +41,9 @@ process.stdin.on('end', () => {
     const rawPath = extractPath(toolName, toolInput);
     if (!rawPath) { process.exit(0); return; }
 
-    // Normalize to relative path from cwd
-    const rel = path.isAbsolute(rawPath) ? path.relative(cwd, rawPath) : rawPath;
-
-    // Skip tokimizer's own state files to avoid self-tracking loops
-    if (rel.startsWith('.claude' + path.sep + 'tokimizer') ||
-        rel.startsWith('.claude/tokimizer')) {
-      process.exit(0); return;
-    }
+    // Normalize to forward-slash relative path from cwd; returns null for self-tracking paths
+    const rel = normalizePath(rawPath, cwd);
+    if (rel === null) { process.exit(0); return; }
 
     const type = WRITE_TOOLS.has(toolName) ? 'edit' : 'read';
     const stateDir = detectStateDir(cwd);

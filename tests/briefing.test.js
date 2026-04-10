@@ -163,6 +163,18 @@ test('co-access bonus is not applied when the co-accessed file is NOT in the pas
   // (winner score 100 >> target effective max 5.5, so this is trivially true,
   // but the important thing is target is in Beyond budget, not within budget)
   assert.ok(result.includes('Beyond budget'), `expected beyond-budget section: ${result}`);
+  // target.ts must be in Beyond budget, not within the budget slot
+  assert.ok(
+    result.includes('src/target.ts'),
+    `src/target.ts should appear in beyond-budget list: ${result}`
+  );
+  // Verify it's in beyond-budget section specifically
+  const beyondIdx = result.indexOf('Beyond budget');
+  const targetIdx2 = result.indexOf('src/target.ts');
+  assert.ok(
+    beyondIdx !== -1 && targetIdx2 > beyondIdx,
+    `src/target.ts should appear after 'Beyond budget': ${result}`
+  );
 });
 
 test('generateBriefing does not mutate fileMap scores', () => {

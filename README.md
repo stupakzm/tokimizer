@@ -23,11 +23,30 @@ The more you use it, the better it gets. No configuration required.
 **1. Clone or download this repo:**
 
 ```bash
-git clone https://github.com/youruser/tokimizer ~/.claude/plugins/tokimizer
-# or place it anywhere — the path is what matters
+git clone https://github.com/youruser/tokimizer ~/projects/tokimizer
 ```
 
-**2. Register the plugin in `~/.claude/settings.json`:**
+**2. Create the plugin install directory:**
+
+```bash
+mkdir -p ~/.claude/plugins/tokimizer
+mkdir -p ~/.claude/commands/tokimizer
+```
+
+**3. Sync plugin files:**
+
+```bash
+# Sync hooks, skills, and plugin manifest
+cp -r ~/projects/tokimizer/{commands,skills,hooks} ~/.claude/plugins/tokimizer/
+cp ~/projects/tokimizer/.claude-plugin/plugin.json ~/.claude/plugins/tokimizer/plugin.json
+
+# Sync commands for / autocomplete
+cp ~/projects/tokimizer/commands/*.md ~/.claude/commands/tokimizer/
+```
+
+> Re-run the sync whenever you update the plugin. Slash command autocomplete (`/tokimizer:*`) is driven by `~/.claude/commands/tokimizer/` — the plugin `commands/` field alone is not enough.
+
+**4. Register the plugin in `~/.claude/settings.json`:**
 
 ```json
 {
@@ -37,25 +56,7 @@ git clone https://github.com/youruser/tokimizer ~/.claude/plugins/tokimizer
 }
 ```
 
-**3. Add the install path to `~/.claude/plugins/installed_plugins.json`:**
-
-```json
-{
-  "plugins": {
-    "tokimizer": [
-      {
-        "scope": "user",
-        "installPath": "/absolute/path/to/tokimizer",
-        "version": "1.0.0",
-        "installedAt": "2026-04-10T00:00:00.000Z",
-        "lastUpdated": "2026-04-10T00:00:00.000Z"
-      }
-    ]
-  }
-}
-```
-
-**4. Run `/tokimizer:reindex` in your first session** to scan your project and set a token budget.
+**5. Reload plugins** with `/reload-plugins`, then run `/tokimizer:reindex` in your first session to scan your project and set a token budget.
 
 ## Commands
 
@@ -64,6 +65,7 @@ git clone https://github.com/youruser/tokimizer ~/.claude/plugins/tokimizer
 | `/tokimizer:reindex` | Scan the full project and set token budget. Run once on first use or after major restructuring. |
 | `/tokimizer:analyze` | Show a full token usage report — top files by score, bottom files by waste, budget status. |
 | `/tokimizer:optimize` | Review and selectively apply `.claudeignore` suggestions for large, stale files. |
+| `/tokimizer:status` | Quick status snapshot — plugin state, state location, last flush, budget, session buffer, and pending ignores. |
 
 ## Scoring formula
 
@@ -111,38 +113,70 @@ Three files are maintained:
 
 Tokimizer never automatically modifies `.claudeignore`. When it detects files that score below 0.1, are larger than 20 KB, and haven't been seen in 5+ sessions, it queues them as suggestions. Run `/tokimizer:optimize` to review and apply them interactively.
 
+## `.claudeignore` support
+
+Tokimizer respects a `.claudeignore` file at the project root (same format as `.gitignore`). Supported pattern types:
+
+| Pattern | Behaviour |
+|---------|-----------|
+| `dist/` | Exclude directory by prefix |
+| `*.log` | Exclude by basename glob |
+| `src/*.test.ts` | Exclude by path glob (single-segment wildcard) |
+| `**/*.generated.ts` | Exclude anywhere in the tree (multi-segment wildcard) |
+| `config/secrets.json` | Exclude by exact path |
+
+The `.claudeignore` file itself and the `.claude/` directory are always excluded and never indexed.
+
+If you run `/tokimizer:reindex` without a `--budget` flag, the existing budget is preserved — it is never silently reset to the default.
+
 ## Project structure
 
 ```
 tokimizer/
-├── plugin.json               # Plugin manifest
+├── plugin.json               # Plugin manifest (source of truth)
+├── .claude-plugin/
+│   └── plugin.json           # Distribution manifest (copied to install root on sync)
 ├── hooks/
 │   ├── hooks.json            # Hook event registrations
 │   ├── lib/
+│   │   ├── walker.js         # Shared file walker, glob matching, .claudeignore parsing
 │   │   ├── state.js          # File-map / buffer / suggestions I/O
 │   │   ├── scoring.js        # Scoring formula and recency decay
+│   │   ├── cold-start.js     # Cold-start file map builder
 │   │   └── briefing.js       # Context briefing generator
-│   ├── session-start.js      # SessionStart: inject briefing
+│   ├── session-start.js      # SessionStart: inject briefing (cold-starts if needed)
 │   ├── track-access.js       # PostToolUse: buffer file accesses
 │   ├── flush-scores.js       # Stop: batch flush scores
 │   ├── post-compact.js       # PostCompact: re-inject briefing
-│   └── session-end.js        # SessionEnd: safety-net flush
+│   ├── session-end.js        # SessionEnd: safety-net flush
+│   └── reindex.js            # Standalone reindex script (also used by /tokimizer:reindex)
 ├── commands/
-│   ├── optimize.md           # /tokimizer:optimize
 │   ├── analyze.md            # /tokimizer:analyze
-│   └── reindex.md            # /tokimizer:reindex
+│   ├── optimize.md           # /tokimizer:optimize
+│   ├── reindex.md            # /tokimizer:reindex
+│   └── status.md             # /tokimizer:status
 └── skills/
     └── tokimizer/
         └── SKILL.md          # Behavioral guide for Claude
 ```
 
+### Standalone reindex
+
+`reindex.js` can be run directly outside of a Claude session:
+
+```bash
+node hooks/reindex.js                    # reindex cwd, preserve existing budget
+node hooks/reindex.js --budget 20        # reindex and set budget to 20%
+node hooks/reindex.js --cwd /path/to/project --budget 40
+```
+
 ## Tests
 
 ```bash
-node --test tests/*.test.js
+node --test
 ```
 
-36 tests across state, scoring, briefing, track-access, and flush-scores modules. Zero external dependencies.
+87 tests across state, scoring, briefing, track-access, flush-scores, cold-start, reindex, and hook integration modules. Zero external dependencies.
 
 ## License
 

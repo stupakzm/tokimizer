@@ -6,7 +6,7 @@ const {
   detectStateDir, readFileMap, writeFileMap,
   readSessionBuffer, clearSessionBuffer, appendSuggestions
 } = require('./lib/state');
-const { calcTokenCost, calcScore } = require('./lib/scoring');
+const { calcScore } = require('./lib/scoring');
 
 function flush(cwd, sessionId) {
   const stateDir = detectStateDir(cwd);
@@ -69,12 +69,10 @@ function flush(cwd, sessionId) {
     entry.last_accessed = now;
     entry.sessions_unseen = 0;
 
-    // Update co_access
-    const coSet = new Set(entry.co_access || []);
-    for (const other of sessionPaths) {
-      if (other !== p) coSet.add(other);
-    }
-    entry.co_access = [...coSet].slice(0, 20);
+    // Update co_access — new session peers take priority over older ones
+    const newPeers = sessionPaths.filter(other => other !== p);
+    const existing = (entry.co_access || []).filter(c => !newPeers.includes(c));
+    entry.co_access = [...newPeers, ...existing].slice(0, 20);
   }
 
   // Recalculate scores for all files

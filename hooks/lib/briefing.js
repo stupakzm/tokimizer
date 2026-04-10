@@ -20,19 +20,42 @@ function generateBriefing(fileMap, prefix) {
   const budget = Math.round(contextWindow * budgetPct / 100);
 
   const entries = Object.entries(fileMap.files);
-  const sorted = entries.slice().sort(([, a], [, b]) => b.score - a.score);
+
+  // ── Pass 1: greedy walk by raw score to establish initial within-budget set ──
+  const pass1Sorted = entries.slice().sort(([, a], [, b]) => b.score - a.score);
+
+  let tokensUsed1 = 0;
+  const pass1Set = new Set();
+
+  for (const [filePath, entry] of pass1Sorted) {
+    const cost = calcTokenCost(entry.size_bytes);
+    if (isEntryPoint(filePath) || tokensUsed1 + cost <= budget) {
+      pass1Set.add(filePath);
+      tokensUsed1 += cost;
+    }
+  }
+
+  // ── Pass 2: compute effective scores using pass-1 set as co-access reference ──
+  const working = entries.map(([filePath, entry]) => {
+    const coAccess = Array.isArray(entry.co_access) ? entry.co_access : [];
+    const n = coAccess.filter(peer => pass1Set.has(peer)).length;
+    const effectiveScore = entry.score * (1 + 0.1 * n);
+    return { path: filePath, effectiveScore, score: entry.score, size_bytes: entry.size_bytes };
+  });
+
+  working.sort((a, b) => b.effectiveScore - a.effectiveScore);
 
   let tokensUsed = 0;
   const withinBudget = [];
   const beyondBudget = [];
 
-  for (const [filePath, entry] of sorted) {
-    const cost = calcTokenCost(entry.size_bytes);
-    if (isEntryPoint(filePath) || tokensUsed + cost <= budget) {
-      withinBudget.push({ path: filePath, score: entry.score, cost });
+  for (const item of working) {
+    const cost = calcTokenCost(item.size_bytes);
+    if (isEntryPoint(item.path) || tokensUsed + cost <= budget) {
+      withinBudget.push({ path: item.path, score: item.score, cost });
       tokensUsed += cost;
     } else {
-      beyondBudget.push(filePath);
+      beyondBudget.push(item.path);
     }
   }
 

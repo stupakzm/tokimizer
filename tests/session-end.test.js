@@ -5,18 +5,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { writeFileMap, writeSessionBuffer, readSessionBuffer, readFileMap } = require('../hooks/lib/state');
+const { detectStateDir, writeFileMap, writeSessionBuffer, readSessionBuffer, readFileMap } = require('../hooks/lib/state');
 
 function mkLocalProject() {
   const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tokimizer-hook-'));
-  const claudeDir = path.join(tmpCwd, '.claude');
-  const stateDir = path.join(claudeDir, 'tokimizer');
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(claudeDir, 'settings.json'),
-    JSON.stringify({ enabledPlugins: { tokimizer: true } })
-  );
-  return { tmpCwd, stateDir };
+  const stateDir = detectStateDir(tmpCwd);
+  const cleanup = () => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(tmpCwd, { recursive: true, force: true });
+  };
+  return { tmpCwd, stateDir, cleanup };
 }
 
 function runHook(hookFile, inputJson) {
@@ -31,7 +29,7 @@ function runHook(hookFile, inputJson) {
 const HOOK = path.resolve(__dirname, '../hooks/session-end.js');
 
 test('session-end: non-empty buffer — file-map written and buffer cleared', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   // Create a real file on disk so flush can stat it
   fs.mkdirSync(path.join(tmpCwd, 'src'), { recursive: true });
@@ -58,11 +56,11 @@ test('session-end: non-empty buffer — file-map written and buffer cleared', ()
   const bufferPath = path.join(stateDir, 'session-buffer.json');
   assert.ok(!fs.existsSync(bufferPath), 'session-buffer.json should be cleared after flush');
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('session-end: empty buffer (accesses: []) — exits 0 and file-map not touched', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   // Write a known file-map before running the hook
   const originalMap = {
@@ -97,11 +95,11 @@ test('session-end: empty buffer (accesses: []) — exits 0 and file-map not touc
     'file-map.json must not be rewritten when buffer has no accesses'
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('session-end: no buffer file at all — exits 0 cleanly', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   // No session-buffer.json written — hook must not throw or create file-map
   const result = runHook(HOOK, { cwd: tmpCwd, session_id: 'sess-c3' });
@@ -114,5 +112,5 @@ test('session-end: no buffer file at all — exits 0 cleanly', () => {
     'file-map.json must not be created when there is no buffer'
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });

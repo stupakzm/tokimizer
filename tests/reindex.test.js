@@ -4,23 +4,21 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { readFileMap } = require('../hooks/lib/state');
+const { detectStateDir, readFileMap } = require('../hooks/lib/state');
 const { reindex } = require('../hooks/reindex');
 
 function mkLocalProject() {
   const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tokimizer-reindex-'));
-  const claudeDir = path.join(tmpCwd, '.claude');
-  const stateDir = path.join(claudeDir, 'tokimizer');
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(claudeDir, 'settings.json'),
-    JSON.stringify({ enabledPlugins: { tokimizer: true } })
-  );
-  return { tmpCwd, stateDir };
+  const stateDir = detectStateDir(tmpCwd);
+  const cleanup = () => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(tmpCwd, { recursive: true, force: true });
+  };
+  return { tmpCwd, stateDir, cleanup };
 }
 
 test('reindex writes file-map.json with correct config block', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.writeFileSync(path.join(tmpCwd, 'index.js'), 'console.log("hello");');
 
   reindex(tmpCwd, 35);
@@ -34,11 +32,11 @@ test('reindex writes file-map.json with correct config block', () => {
   assert.ok(fm.config.project_total_tokens > 0);
   assert.ok(typeof fm.config.budget_set_at === 'string');
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex writes an entry for each discovered file', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.mkdirSync(path.join(tmpCwd, 'src'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, 'src', 'a.ts'), 'export const a = 1;');
   fs.writeFileSync(path.join(tmpCwd, 'src', 'b.ts'), 'export const b = 2;');
@@ -52,11 +50,11 @@ test('reindex writes an entry for each discovered file', () => {
   assert.ok(keys.some(k => k === 'src/b.ts'), `expected src/b.ts, got ${JSON.stringify(keys)}`);
   assert.ok(keys.some(k => k === 'README.md'), `expected README.md, got ${JSON.stringify(keys)}`);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex file entries have correct cold-start shape', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.writeFileSync(path.join(tmpCwd, 'app.js'), 'const x = 42;');
 
   reindex(tmpCwd, 35);
@@ -75,11 +73,11 @@ test('reindex file entries have correct cold-start shape', () => {
   assert.strictEqual(entry.sessions_unseen, 0);
   assert.deepStrictEqual(entry.co_access, []);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex excludes .git/, node_modules/, and .claude/tokimizer/', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.mkdirSync(path.join(tmpCwd, '.git'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, '.git', 'HEAD'), 'ref: refs/heads/main');
   fs.mkdirSync(path.join(tmpCwd, 'node_modules', 'lodash'), { recursive: true });
@@ -104,11 +102,11 @@ test('reindex excludes .git/, node_modules/, and .claude/tokimizer/', () => {
   );
   assert.ok(keys.some(k => k === 'real.js'), `real.js should be included, got ${JSON.stringify(keys)}`);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex respects .claudeignore patterns', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.writeFileSync(path.join(tmpCwd, '.claudeignore'), 'dist/\n*.log\n');
   fs.mkdirSync(path.join(tmpCwd, 'dist'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, 'dist', 'bundle.js'), 'bundled code');
@@ -129,11 +127,11 @@ test('reindex respects .claudeignore patterns', () => {
   );
   assert.ok(keys.some(k => k === 'index.js'), `index.js should be included, got ${JSON.stringify(keys)}`);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex deletes pre-existing file-map.json and session-buffer.json', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   // Write stale state files
   fs.writeFileSync(path.join(stateDir, 'file-map.json'), JSON.stringify({ version: 1, stale: true }));
   fs.writeFileSync(path.join(stateDir, 'session-buffer.json'), JSON.stringify({ session_id: 'old' }));
@@ -151,11 +149,11 @@ test('reindex deletes pre-existing file-map.json and session-buffer.json', () =>
   assert.ok(fm, 'file-map.json should exist');
   assert.strictEqual(fm.stale, undefined, 'stale flag should not be present in new file-map');
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex project_total_tokens is sum of all file token costs', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   const content1 = 'a'.repeat(400); // 400 bytes → 100 tokens
   const content2 = 'b'.repeat(800); // 800 bytes → 200 tokens
   fs.writeFileSync(path.join(tmpCwd, 'file1.js'), content1);
@@ -170,11 +168,11 @@ test('reindex project_total_tokens is sum of all file token costs', () => {
   }
   assert.strictEqual(fm.config.project_total_tokens, expectedTotal);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('reindex honours --budget flag via budgetPct argument', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.writeFileSync(path.join(tmpCwd, 'index.js'), 'const x = 1;');
 
   reindex(tmpCwd, 20);
@@ -182,5 +180,39 @@ test('reindex honours --budget flag via budgetPct argument', () => {
   const fm = readFileMap(stateDir);
   assert.strictEqual(fm.config.token_budget_pct, 20);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
+});
+
+test('reindex on empty project produces valid empty file-map', () => {
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
+  // No files added — only the .claude/ dir created by mkLocalProject exists
+
+  reindex(tmpCwd, 35);
+
+  const fm = readFileMap(stateDir);
+  assert.ok(fm, 'file-map.json should exist');
+  assert.strictEqual(fm.version, 1);
+  assert.deepStrictEqual(fm.files, {});
+  assert.strictEqual(fm.config.project_total_tokens, 0);
+
+  cleanup();
+});
+
+test('reindex preserves existing token_budget_pct when no --budget given', () => {
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
+  fs.writeFileSync(path.join(tmpCwd, 'index.js'), 'const x = 1;');
+
+  // First run with explicit budget
+  reindex(tmpCwd, 20);
+  assert.strictEqual(readFileMap(stateDir).config.token_budget_pct, 20);
+
+  // Second run without budget argument — should preserve 20, not reset to 35
+  reindex(tmpCwd, undefined);
+  assert.strictEqual(
+    readFileMap(stateDir).config.token_budget_pct,
+    20,
+    'budget should be preserved from previous run'
+  );
+
+  cleanup();
 });

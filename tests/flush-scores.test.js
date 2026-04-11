@@ -4,23 +4,21 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { writeFileMap, writeSessionBuffer, readFileMap, readSuggestions } = require('../hooks/lib/state');
+const { detectStateDir, writeFileMap, writeSessionBuffer, readFileMap, readSuggestions } = require('../hooks/lib/state');
 const { flush } = require('../hooks/flush-scores');
 
 function mkLocalProject() {
   const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tokimizer-flush-'));
-  const claudeDir = path.join(tmpCwd, '.claude');
-  const stateDir = path.join(claudeDir, 'tokimizer');
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(claudeDir, 'settings.json'),
-    JSON.stringify({ enabledPlugins: { tokimizer: true } })
-  );
-  return { tmpCwd, stateDir };
+  const stateDir = detectStateDir(tmpCwd);
+  const cleanup = () => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(tmpCwd, { recursive: true, force: true });
+  };
+  return { tmpCwd, stateDir, cleanup };
 }
 
 test('flush creates new file entry from session access', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.mkdirSync(path.join(tmpCwd, 'src'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, 'src', 'index.ts'), 'const x = 1;');
 
@@ -36,11 +34,11 @@ test('flush creates new file entry from session access', () => {
   assert.strictEqual(fm.files['src/index.ts'].access_count, 1);
   assert.strictEqual(fm.files['src/index.ts'].edit_count, 0);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush increments edit_count for edit type', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.mkdirSync(path.join(tmpCwd, 'src'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, 'src', 'api.ts'), 'export default {}');
 
@@ -55,11 +53,11 @@ test('flush increments edit_count for edit type', () => {
   assert.strictEqual(fm.files['src/api.ts'].edit_count, 1);
   assert.strictEqual(fm.files['src/api.ts'].access_count, 0);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush clears session buffer after writing', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   const { readSessionBuffer } = require('../hooks/lib/state');
 
   writeSessionBuffer(stateDir, { session_id: 'sess1', accesses: [] });
@@ -67,18 +65,18 @@ test('flush clears session buffer after writing', () => {
 
   assert.strictEqual(readSessionBuffer(stateDir), null);
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush exits cleanly with empty buffer', () => {
-  const { tmpCwd } = mkLocalProject();
+  const { tmpCwd, cleanup } = mkLocalProject();
   // No buffer written — flush should not throw
   assert.doesNotThrow(() => flush(tmpCwd, 'sess1'));
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush adds ignore candidate for large stale file', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   writeFileMap(stateDir, {
     version: 1, config: {}, last_updated: new Date().toISOString(),
@@ -100,11 +98,11 @@ test('flush adds ignore candidate for large stale file', () => {
     `expected dist/bundle.js in ${JSON.stringify(suggestions)}`
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush updates co_access for files accessed together', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   fs.mkdirSync(path.join(tmpCwd, 'src'), { recursive: true });
   fs.writeFileSync(path.join(tmpCwd, 'src', 'a.ts'), '');
   fs.writeFileSync(path.join(tmpCwd, 'src', 'b.ts'), '');
@@ -123,11 +121,11 @@ test('flush updates co_access for files accessed together', () => {
   assert.ok(fm.files['src/a.ts'].co_access.includes('src/b.ts'));
   assert.ok(fm.files['src/b.ts'].co_access.includes('src/a.ts'));
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush with null buffer does not create file-map.json', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   // No buffer written — file-map.json must not be created
   const fileMapPath = path.join(stateDir, 'file-map.json');
 
@@ -139,12 +137,13 @@ test('flush with null buffer does not create file-map.json', () => {
     'file-map.json should not be created when buffer is null'
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('flush with empty accesses does not modify existing file-map.json', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
   const fileMapPath = path.join(stateDir, 'file-map.json');
+  const { readSessionBuffer } = require('../hooks/lib/state');
 
   // Write a known file-map before flushing
   const originalMap = {
@@ -161,33 +160,27 @@ test('flush with empty accesses does not modify existing file-map.json', () => {
   };
   writeFileMap(stateDir, originalMap);
 
-  // Capture mtime before flush
-  const mtimeBefore = fs.statSync(fileMapPath).mtimeMs;
+  // Capture serialized content before flush for reliable byte-level comparison
+  const contentBefore = fs.readFileSync(fileMapPath, 'utf8');
 
   // Write a buffer with empty accesses
   writeSessionBuffer(stateDir, { session_id: 'sess1', accesses: [] });
   flush(tmpCwd, 'sess1');
 
-  // file-map.json must still exist and be byte-for-byte identical
-  const mtimeAfter = fs.statSync(fileMapPath).mtimeMs;
+  // file-map.json must be byte-for-byte identical (no rewrite occurred)
+  const contentAfter = fs.readFileSync(fileMapPath, 'utf8');
   assert.strictEqual(
-    mtimeAfter,
-    mtimeBefore,
-    'file-map.json mtime should not change when accesses is empty'
+    contentAfter,
+    contentBefore,
+    'file-map.json content should not change when accesses is empty'
   );
 
-  // Content must be unchanged
-  const mapAfter = readFileMap(stateDir);
+  // session-buffer.json must be cleared even on the early-return path
   assert.strictEqual(
-    mapAfter.last_updated,
-    originalMap.last_updated,
-    'last_updated must not be mutated'
-  );
-  assert.strictEqual(
-    mapAfter.files['src/existing.ts'].access_count,
-    3,
-    'access_count must not be incremented'
+    readSessionBuffer(stateDir),
+    null,
+    'session buffer should be cleared after flush with empty accesses'
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });

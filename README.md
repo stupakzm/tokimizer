@@ -97,17 +97,20 @@ If your whole project fits comfortably in context, Tokimizer skips filtering ent
 
 ## State storage
 
-State is stored per-project, isolated by a hash of the project path.
+State is stored globally, keyed by a stable **project UUID** rather than a path hash — so your scoring history survives directory renames and path moves.
 
-| Install scope | State location |
-|---------------|----------------|
-| Global | `~/.claude/tokimizer/<project-hash>/` |
-| Local (`.claude/` in project) | `.claude/tokimizer/` |
+| File | Location |
+|------|----------|
+| Project identity | `{project}/.claude/tokimizer/project-id` |
+| Scored file index | `~/.claude/tokimizer/<uuid>/file-map.json` |
+| Session buffer | `~/.claude/tokimizer/<uuid>/session-buffer.json` |
+| Ignore suggestions | `~/.claude/tokimizer/<uuid>/suggestions.txt` |
 
-Three files are maintained:
-- **`file-map.json`** — scored index of all observed files
-- **`session-buffer.json`** — ephemeral buffer for the current session (cleared after each flush)
-- **`suggestions.txt`** — `.claudeignore` candidates pending your review
+On first use, Tokimizer writes a UUID to `{project}/.claude/tokimizer/project-id`. Subsequent sessions read that file to locate the matching state directory — the path itself never factors into the key.
+
+**Upgrading from a prior version:** if a legacy hash-based state directory exists for your current path, Tokimizer automatically copies the `file-map.json` forward into the new UUID directory on the first session after upgrade.
+
+**Gitignore recommendation:** add `.claude/tokimizer/project-id` to your `.gitignore` (or `.claudeignore`) unless you want all contributors to share the same global state key.
 
 ## `.claudeignore` suggestions
 

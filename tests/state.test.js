@@ -1,6 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,35 +12,113 @@ const {
   readSuggestions, appendSuggestions, clearSuggestions
 } = require('../hooks/lib/state');
 
+const GLOBAL_BASE = path.join(os.homedir(), '.claude', 'tokimizer');
+
 function mkTmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'tokimizer-test-'));
 }
 
-function makeLocalProject(tmpCwd) {
-  const claudeDir = path.join(tmpCwd, '.claude');
-  fs.mkdirSync(claudeDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(claudeDir, 'settings.json'),
-    JSON.stringify({ enabledPlugins: { tokimizer: true } })
-  );
-}
+// ---------------------------------------------------------------------------
+// detectStateDir — UUID-based project identity
+// ---------------------------------------------------------------------------
 
-test('detectStateDir uses global path for unknown project', () => {
+test('detectStateDir returns a path inside global tokimizer base', () => {
   const tmpCwd = mkTmp();
   const stateDir = detectStateDir(tmpCwd);
   assert.ok(
-    stateDir.includes(path.join('.claude', 'tokimizer')),
-    `expected global tokimizer path, got ${stateDir}`
+    stateDir.startsWith(GLOBAL_BASE),
+    `expected path under ${GLOBAL_BASE}, got ${stateDir}`
   );
   fs.rmSync(stateDir, { recursive: true, force: true });
   fs.rmSync(tmpCwd, { recursive: true, force: true });
 });
 
-test('detectStateDir uses local path when local settings enables tokimizer', () => {
+test('detectStateDir creates a project-id file on first call', () => {
   const tmpCwd = mkTmp();
-  makeLocalProject(tmpCwd);
   const stateDir = detectStateDir(tmpCwd);
-  assert.ok(stateDir.startsWith(tmpCwd), `expected local path under ${tmpCwd}, got ${stateDir}`);
+  const idFile = path.join(tmpCwd, '.claude', 'tokimizer', 'project-id');
+  assert.ok(fs.existsSync(idFile), 'project-id file should be created');
+  const uuid = fs.readFileSync(idFile, 'utf8').trim();
+  assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'project-id should be a UUID');
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('detectStateDir returns same state dir on repeated calls', () => {
+  const tmpCwd = mkTmp();
+  const first = detectStateDir(tmpCwd);
+  const second = detectStateDir(tmpCwd);
+  assert.strictEqual(first, second, 'should return the same state dir on repeated calls');
+  fs.rmSync(first, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('detectStateDir state dir name matches the UUID in project-id file', () => {
+  const tmpCwd = mkTmp();
+  const stateDir = detectStateDir(tmpCwd);
+  const uuid = fs.readFileSync(path.join(tmpCwd, '.claude', 'tokimizer', 'project-id'), 'utf8').trim();
+  assert.ok(stateDir.endsWith(uuid), `state dir should end with UUID ${uuid}, got ${stateDir}`);
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('detectStateDir uses existing project-id without overwriting it', () => {
+  const tmpCwd = mkTmp();
+  const idDir = path.join(tmpCwd, '.claude', 'tokimizer');
+  fs.mkdirSync(idDir, { recursive: true });
+  const existingUuid = crypto.randomUUID();
+  fs.writeFileSync(path.join(idDir, 'project-id'), existingUuid, 'utf8');
+
+  const stateDir = detectStateDir(tmpCwd);
+  assert.ok(stateDir.endsWith(existingUuid), `should use existing UUID, got ${stateDir}`);
+  const idOnDisk = fs.readFileSync(path.join(idDir, 'project-id'), 'utf8').trim();
+  assert.strictEqual(idOnDisk, existingUuid, 'project-id file should not be overwritten');
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('detectStateDir migrates legacy hash-based file-map on first call', () => {
+  const tmpCwd = mkTmp();
+  // Seed a legacy hash-keyed state dir with a file-map
+  const legacyHash = crypto.createHash('sha256').update(tmpCwd).digest('hex').slice(0, 8);
+  const legacyDir = path.join(GLOBAL_BASE, legacyHash);
+  fs.mkdirSync(legacyDir, { recursive: true });
+  const legacyData = { version: 1, files: { 'legacy.js': { score: 2.5 } } };
+  fs.writeFileSync(path.join(legacyDir, 'file-map.json'), JSON.stringify(legacyData));
+
+  const stateDir = detectStateDir(tmpCwd);
+  const migratedPath = path.join(stateDir, 'file-map.json');
+  assert.ok(fs.existsSync(migratedPath), 'file-map.json should be migrated to UUID dir');
+  const migrated = JSON.parse(fs.readFileSync(migratedPath, 'utf8'));
+  assert.deepStrictEqual(migrated, legacyData, 'migrated data should match legacy data');
+
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(legacyDir, { recursive: true, force: true });
+  fs.rmSync(tmpCwd, { recursive: true, force: true });
+});
+
+test('detectStateDir does not overwrite existing file-map when migrating', () => {
+  const tmpCwd = mkTmp();
+  // Seed a legacy hash dir
+  const legacyHash = crypto.createHash('sha256').update(tmpCwd).digest('hex').slice(0, 8);
+  const legacyDir = path.join(GLOBAL_BASE, legacyHash);
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'file-map.json'), JSON.stringify({ version: 1, files: {} }));
+
+  // First call: migrates
+  const stateDir = detectStateDir(tmpCwd);
+  // Write a newer file-map to the UUID dir
+  const newerData = { version: 1, files: { 'newer.js': { score: 9.9 } } };
+  fs.writeFileSync(path.join(stateDir, 'file-map.json'), JSON.stringify(newerData));
+
+  // Second call: project-id exists, no migration attempted → newer map untouched
+  const stateDir2 = detectStateDir(tmpCwd);
+  assert.strictEqual(stateDir2, stateDir);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(stateDir, 'file-map.json'), 'utf8'));
+  assert.deepStrictEqual(onDisk, newerData, 'existing file-map should not be overwritten on second call');
+
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  fs.rmSync(legacyDir, { recursive: true, force: true });
   fs.rmSync(tmpCwd, { recursive: true, force: true });
 });
 
@@ -163,25 +242,3 @@ test('appendSuggestions deduplicates by path even when existing entry has a time
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('detectStateDir falls back to global path when settings.json is malformed JSON', () => {
-  const tmpCwd = mkTmp();
-  const claudeDir = path.join(tmpCwd, '.claude');
-  fs.mkdirSync(claudeDir, { recursive: true });
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{ "enabledPlugins": { INVALID JSON }');
-
-  const stateDir = detectStateDir(tmpCwd);
-
-  // Must NOT be under tmpCwd (i.e. must not be the local path)
-  assert.ok(
-    !stateDir.startsWith(tmpCwd),
-    `expected global fallback path, got local path ${stateDir}`
-  );
-  // Must be under the global tokimizer base
-  assert.ok(
-    stateDir.includes(path.join('.claude', 'tokimizer')),
-    `expected global tokimizer path, got ${stateDir}`
-  );
-
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
-});

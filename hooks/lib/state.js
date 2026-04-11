@@ -6,28 +6,84 @@ const crypto = require('crypto');
 
 const GLOBAL_BASE = path.join(os.homedir(), '.claude', 'tokimizer');
 
-function projectHash(cwd) {
-  return crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 8);
+// ---------------------------------------------------------------------------
+// Project identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the UUID stored in `{cwd}/.claude/tokimizer/project-id`, or null.
+ */
+function readProjectId(cwd) {
+  const idFile = path.join(cwd, '.claude', 'tokimizer', 'project-id');
+  if (!fs.existsSync(idFile)) return null;
+  return fs.readFileSync(idFile, 'utf8').trim() || null;
 }
 
+/**
+ * Write a UUID to `{cwd}/.claude/tokimizer/project-id`.
+ * Creates the directory if necessary.
+ */
+function writeProjectId(cwd, uuid) {
+  const idDir = path.join(cwd, '.claude', 'tokimizer');
+  fs.mkdirSync(idDir, { recursive: true });
+  fs.writeFileSync(path.join(idDir, 'project-id'), uuid, 'utf8');
+}
+
+// ---------------------------------------------------------------------------
+// State directory detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the state directory for `cwd`.
+ *
+ * State is always stored in the global base (`~/.claude/tokimizer/<uuid>/`).
+ * The UUID is a stable project identity written to `{cwd}/.claude/tokimizer/project-id`
+ * on first use — so it survives directory renames and path moves.
+ *
+ * Migration: if this is the first call for a project that previously used the
+ * legacy cwd-hash approach, the old `file-map.json` is copied forward so no
+ * scoring history is lost.
+ */
 function detectStateDir(cwd) {
-  const localSettings = path.join(cwd, '.claude', 'settings.json');
-  if (fs.existsSync(localSettings)) {
+  let uuid = readProjectId(cwd);
+  let isFreshId = false;
+
+  if (!uuid) {
+    uuid = crypto.randomUUID();
+    isFreshId = true;
     try {
-      const s = JSON.parse(fs.readFileSync(localSettings, 'utf8'));
-      if (s.enabledPlugins && s.enabledPlugins.tokimizer) {
-        const localDir = path.join(cwd, '.claude', 'tokimizer');
-        fs.mkdirSync(localDir, { recursive: true });
-        return localDir;
-      }
+      writeProjectId(cwd, uuid);
     } catch (e) {
-      process.stderr.write(`[tokimizer] Warning: could not parse ${localSettings}: ${e.message}\n`);
+      process.stderr.write(
+        `[tokimizer] Warning: could not write project-id to ${cwd}/.claude/tokimizer/project-id: ${e.message}\n`
+      );
+      // Fallback: derive a key from the path — no persistence, but doesn't crash.
+      uuid = crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 8);
+      isFreshId = false;
     }
   }
-  const globalDir = path.join(GLOBAL_BASE, projectHash(cwd));
+
+  const globalDir = path.join(GLOBAL_BASE, uuid);
   fs.mkdirSync(globalDir, { recursive: true });
+
+  // One-time migration from the legacy cwd-hash state directory.
+  if (isFreshId) {
+    const legacyHash = crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 8);
+    const legacyFileMap = path.join(GLOBAL_BASE, legacyHash, 'file-map.json');
+    if (fs.existsSync(legacyFileMap)) {
+      try {
+        fs.copyFileSync(legacyFileMap, path.join(globalDir, 'file-map.json'));
+        process.stderr.write('[tokimizer] Migrated state from legacy path-hash to stable project ID.\n');
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
   return globalDir;
 }
+
+// ---------------------------------------------------------------------------
+// Generic JSON helpers
+// ---------------------------------------------------------------------------
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -40,6 +96,10 @@ function writeJson(filePath, data) {
   fs.renameSync(tmp, filePath);
 }
 
+// ---------------------------------------------------------------------------
+// File-map
+// ---------------------------------------------------------------------------
+
 function readFileMap(stateDir) {
   return readJson(path.join(stateDir, 'file-map.json'));
 }
@@ -47,6 +107,10 @@ function readFileMap(stateDir) {
 function writeFileMap(stateDir, data) {
   writeJson(path.join(stateDir, 'file-map.json'), data);
 }
+
+// ---------------------------------------------------------------------------
+// Session buffer
+// ---------------------------------------------------------------------------
 
 function readSessionBuffer(stateDir) {
   return readJson(path.join(stateDir, 'session-buffer.json'));
@@ -60,6 +124,10 @@ function clearSessionBuffer(stateDir) {
   const p = path.join(stateDir, 'session-buffer.json');
   if (fs.existsSync(p)) fs.unlinkSync(p);
 }
+
+// ---------------------------------------------------------------------------
+// Suggestions
+// ---------------------------------------------------------------------------
 
 function readSuggestions(stateDir) {
   const p = path.join(stateDir, 'suggestions.txt');

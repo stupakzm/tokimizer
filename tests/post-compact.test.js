@@ -5,18 +5,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { writeFileMap, writeSessionBuffer, readSessionBuffer } = require('../hooks/lib/state');
+const { detectStateDir, writeFileMap, writeSessionBuffer, readSessionBuffer } = require('../hooks/lib/state');
 
 function mkLocalProject() {
   const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tokimizer-hook-'));
-  const claudeDir = path.join(tmpCwd, '.claude');
-  const stateDir = path.join(claudeDir, 'tokimizer');
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(claudeDir, 'settings.json'),
-    JSON.stringify({ enabledPlugins: { tokimizer: true } })
-  );
-  return { tmpCwd, stateDir };
+  const stateDir = detectStateDir(tmpCwd);
+  const cleanup = () => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(tmpCwd, { recursive: true, force: true });
+  };
+  return { tmpCwd, stateDir, cleanup };
 }
 
 function runHook(hookFile, inputJson) {
@@ -31,7 +29,7 @@ function runHook(hookFile, inputJson) {
 const HOOK = path.resolve(__dirname, '../hooks/post-compact.js');
 
 test('post-compact: no file-map — additionalContext contains "re-loaded after compaction" and "reindex"', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   const result = runHook(HOOK, { cwd: tmpCwd, session_id: 'sess-b1' });
 
@@ -47,11 +45,11 @@ test('post-compact: no file-map — additionalContext contains "re-loaded after 
     `expected "reindex" in: ${ctx}`
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('post-compact: existing file-map — additionalContext contains "re-loaded after compaction" and "Context loaded"', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   writeFileMap(stateDir, {
     version: 1,
@@ -80,11 +78,11 @@ test('post-compact: existing file-map — additionalContext contains "re-loaded 
     `expected "Context loaded" in: ${ctx}`
   );
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });
 
 test('post-compact: does not reinitialize session-buffer — existing buffer preserved as-is', () => {
-  const { tmpCwd, stateDir } = mkLocalProject();
+  const { tmpCwd, stateDir, cleanup } = mkLocalProject();
 
   // Write a buffer with existing accesses that must not be cleared by post-compact
   const originalBuffer = {
@@ -107,5 +105,5 @@ test('post-compact: does not reinitialize session-buffer — existing buffer pre
   assert.strictEqual(bufferAfter.accesses.length, 1, 'accesses must be unchanged');
   assert.strictEqual(bufferAfter.accesses[0].path, 'src/app.ts', 'access path must be unchanged');
 
-  fs.rmSync(tmpCwd, { recursive: true, force: true });
+  cleanup();
 });

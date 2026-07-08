@@ -26,33 +26,38 @@ function normalizePath(rawPath, cwd) {
   return normalized;
 }
 
-let input = '';
-const stdinTimeout = setTimeout(() => process.exit(0), 10000);
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => { input += chunk; });
-process.stdin.on('end', () => {
-  clearTimeout(stdinTimeout);
-  try {
-    const data = JSON.parse(input);
-    const cwd = data.cwd || process.cwd();
-    const toolName = data.tool_name;
-    const toolInput = data.tool_input;
+// Hook entry point — only runs when executed directly
+if (require.main === module) {
+  let input = '';
+  const stdinTimeout = setTimeout(() => process.exit(0), 10000);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => { input += chunk; });
+  process.stdin.on('end', () => {
+    clearTimeout(stdinTimeout);
+    try {
+      const data = JSON.parse(input);
+      const cwd = data.cwd || process.cwd();
+      const toolName = data.tool_name;
+      const toolInput = data.tool_input;
 
-    const rawPath = extractPath(toolName, toolInput);
-    if (!rawPath) { process.exit(0); return; }
+      const rawPath = extractPath(toolName, toolInput);
+      if (!rawPath) { process.exit(0); return; }
 
-    // Normalize to forward-slash relative path from cwd; returns null for self-tracking paths
-    const rel = normalizePath(rawPath, cwd);
-    if (rel === null) { process.exit(0); return; }
+      // Normalize to forward-slash relative path from cwd; returns null for self-tracking paths
+      const rel = normalizePath(rawPath, cwd);
+      if (rel === null) { process.exit(0); return; }
 
-    const type = WRITE_TOOLS.has(toolName) ? 'edit' : 'read';
-    const stateDir = detectStateDir(cwd);
-    const buffer = readSessionBuffer(stateDir) || { session_id: data.session_id || 'unknown', accesses: [] };
-    buffer.accesses.push({ path: rel, type, ts: Math.floor(Date.now() / 1000) });
-    writeSessionBuffer(stateDir, buffer);
+      const type = WRITE_TOOLS.has(toolName) ? 'edit' : 'read';
+      const stateDir = detectStateDir(cwd);
+      const buffer = readSessionBuffer(stateDir) || { session_id: data.session_id || 'unknown', accesses: [] };
+      buffer.accesses.push({ path: rel, type, ts: Math.floor(Date.now() / 1000) });
+      writeSessionBuffer(stateDir, buffer);
 
-    process.exit(0);
-  } catch (_) {
-    process.exit(0);
-  }
-});
+      process.exit(0);
+    } catch (_) {
+      process.exit(0);
+    }
+  });
+}
+
+module.exports = { extractPath, normalizePath };

@@ -3,18 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-// extractPath is the pure logic — extracted here for testing without stdin side-effects
-function extractPath(toolName, toolInput) {
-  if (!toolInput) return null;
-  if (toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') {
-    return toolInput.file_path || null;
-  }
-  if (toolName === 'Grep') {
-    const p = toolInput.path;
-    if (p && path.extname(p)) return p;
-  }
-  return null;
-}
+const { extractPath, normalizePath } = require('../hooks/track-access');
 
 test('Read: returns file_path', () => {
   assert.strictEqual(extractPath('Read', { file_path: 'src/index.ts' }), 'src/index.ts');
@@ -43,16 +32,6 @@ test('Glob: returns null (patterns are not file paths)', () => {
 test('null input: returns null', () => {
   assert.strictEqual(extractPath('Read', null), null);
 });
-
-// normalizePath: extracted pure helper — mirrors the implementation in hooks/track-access.js
-function normalizePath(rawPath, cwd) {
-  const rel = path.isAbsolute(rawPath)
-    ? path.relative(cwd, rawPath)
-    : rawPath;
-  const normalized = rel.replace(/\\/g, '/');
-  if (normalized.startsWith('.claude/tokimizer')) return null;
-  return normalized;
-}
 
 test('normalizePath: Windows absolute path with backslashes is normalized to forward slashes', () => {
   // Simulate Windows: path.relative returns backslash-separated paths on win32,

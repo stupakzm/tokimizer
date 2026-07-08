@@ -8,7 +8,13 @@
       "Bash(node --test tests/scoring.test.js)",
       "Bash(node --test tests/briefing.test.js)",
       "Bash(node --test tests/track-access.test.js)",
-      "Bash(node --test tests/flush-scores.test.js)"
+      "Bash(node --test tests/flush-scores.test.js)",
+      "Bash(git:*)",
+      "Bash(node:*)",
+      "Bash(echo \"grep exit: $?\")",
+      "Bash(mkdir -p ~/.claude/commands/tokimizer)",
+      "Bash(cp ~/projects/tokimizer/commands/*.md ~/.claude/commands/tokimizer/)",
+      "Read(//c/Users/TopAide/.claude/commands/**)"
     ]
   }
 }

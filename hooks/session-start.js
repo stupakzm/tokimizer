@@ -22,7 +22,7 @@ process.stdin.on('end', () => {
       const suggestions = readSuggestions(stateDir);
 
       if (fileMap === null) {
-        fileMap = await buildColdStartFileMap(cwd);
+        fileMap = buildColdStartFileMap(cwd);
         writeFileMap(stateDir, fileMap);
       }
 
